@@ -54,7 +54,7 @@ If the board is switched off, up to 2 hours of that time is played out when it p
 
 ## Settings
 
-The values at the top of `Stablemate.ino` can be changed:
+The values at the top of `app.cpp` can be changed:
 - `SCREEN_TIMEOUT_MS`
 - `BRIGHTNESS`
 - `VOLUME`
@@ -65,7 +65,8 @@ Stage lengths and heart timers are at the top of `game.cpp`.
 
 ## Files
 
-- `Stablemate/Stablemate.ino`: board setup for display, touch, buttons, clock, sound, sleep and saving.
+- `Stablemate/Stablemate.ino`: intentionally empty; the Arduino IDE opens the project from it.
+- `Stablemate/app.cpp`: board setup for display, touch, buttons, clock, sound, sleep and saving.
 - `Stablemate/game.cpp`, `game.h`: the game. It has no hardware code.
 - `Stablemate/sprites.h`: horses, icons and the 3×5 font.
 - `Stablemate/es8311.*`: Espressif's ES8311 audio codec driver (Apache-2.0), from Waveshare's examples.
