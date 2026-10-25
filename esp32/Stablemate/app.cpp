@@ -438,12 +438,24 @@ static void lightSleepTick() {
 }
 
 // ---------------------------------------------------------------- setup / loop
+static volatile const char *bootStep = "starting";
 static void bootLog(const char *msg) {
+  bootStep = msg;
 #if BOOT_TEST
   Serial.printf("[stablemate %6lu ms] %s\n", (unsigned long)millis(), msg);
-  Serial.flush();
 #endif
 }
+#if BOOT_TEST
+// Repeats the last startup step every 2 s, so the log is visible even if the
+// Serial Monitor connects late, and shows where startup stopped if it hangs.
+static void heartbeatTask(void *) {
+  for (;;) {
+    Serial.printf("[stablemate] up %lus, last step: %s, screen %s\n", (unsigned long)(millis() / 1000),
+                  (const char *)bootStep, screenOn ? "on" : "off");
+    vTaskDelay(pdMS_TO_TICKS(2000));
+  }
+}
+#endif
 
 void setup() {
   Serial.begin(115200);
@@ -451,6 +463,9 @@ void setup() {
   for (uint32_t t0 = millis(); !Serial && millis() - t0 < 2000;) delay(10);  // give Serial Monitor a moment
 #endif
   bootLog("boot");
+#if BOOT_TEST
+  xTaskCreatePinnedToCore(heartbeatTask, "beat", 3072, nullptr, 1, nullptr, 0);
+#endif
   Serial.printf("PSRAM size: %u bytes, free heap: %u\n", (unsigned)ESP.getPsramSize(), (unsigned)ESP.getFreeHeap());
   setCpuFrequencyMhz(160);
   pinMode(BOOT_PIN, INPUT_PULLUP);
