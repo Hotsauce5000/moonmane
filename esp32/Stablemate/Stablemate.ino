@@ -4,7 +4,7 @@
 // Controls
 //   Touch  : the A / B / C buttons drawn under the screen. Hold C for 2 s to mute or unmute.
 //   BOOT   : short press = A, hold = C
-//   PWR    : short press = B   (holding PWR for several seconds powers the board off; that's the PMIC)
+//   PWR    : short press = B, hold 3 s = screen off, hold 5 s = save and power off (press PWR to turn on)
 // The screen turns off after SCREEN_TIMEOUT_MS. Any touch or button wakes it; a call from your
 // horse wakes it too.
 //

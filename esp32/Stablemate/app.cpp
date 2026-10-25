@@ -20,7 +20,9 @@
 #define VOLUME 70                 // 0-100
 #define USE_LIGHT_SLEEP 1         // sleep between ticks while the screen is off (big battery saving)
 #define MAX_CATCHUP_S (2 * 3600)  // time that passes while powered off; anything longer is a pause
-#define BOOT_TEST 1               // flash red, green, blue at startup and log each step to Serial
+#define BOOT_TEST 0               // 1 = flash red, green, blue at startup and log each step to Serial
+#define PWR_SLEEP_MS 3000         // hold PWR this long to turn the screen off
+#define PWR_OFF_MS 5000           // hold PWR this long to save and power off
 
 // ---------------------------------------------------------------- pins (Waveshare V2 pin_config.h)
 #define LCD_SDIO0 4
@@ -395,8 +397,21 @@ static void pollTouch() {
   }
 }
 
+static void powerOff() {
+  saveGame();
+  prefs.end();
+  digitalWrite(PA_EN, LOW);
+  panel->setBrightness(0);
+  panel->displayOff();
+  delay(50);
+  uint8_t v = 0;
+  if (i2cRead(ADDR_PMU, 0x10, &v, 1)) i2cWrite8(ADDR_PMU, 0x10, v | 0x01);  // AXP2101 soft power-off
+  for (;;) delay(1000);
+}
+
 static bool bootDown = false, bootLongSent = false, pwrDown = false;
-static uint32_t bootStart = 0, lastPwrPoll = 0;
+static uint32_t bootStart = 0, lastPwrPoll = 0, pwrStart = 0;
+static uint8_t pwrStage = 0;  // 0 = short press so far, 1 = screen turned off, 2 = powering off
 static void pollButtons() {
   uint32_t now = millis();
   bool b = digitalRead(BOOT_PIN) == LOW;
@@ -409,7 +424,13 @@ static void pollButtons() {
   if (now - lastPwrPoll >= 30) {
     lastPwrPoll = now;
     bool p = pwrKeyDown();
-    if (p && !pwrDown) buttonPressed(BTN_B);
+    if (p && !pwrDown) { pwrStart = now; pwrStage = 0; }
+    if (p && pwrDown) {
+      uint32_t held = now - pwrStart;
+      if (pwrStage < 1 && held >= PWR_SLEEP_MS) { pwrStage = 1; screenSleep(); }
+      if (pwrStage < 2 && held >= PWR_OFF_MS) { pwrStage = 2; powerOff(); }
+    }
+    if (!p && pwrDown && pwrStage == 0 && now - pwrStart < 1000) buttonPressed(BTN_B);  // B on release
     pwrDown = p;
   }
 }
@@ -475,6 +496,8 @@ void setup() {
     Wire.beginTransmission(a);
     Serial.printf("I2C 0x%02X: %s\n", a, Wire.endTransmission() == 0 ? "found" : "MISSING");
   }
+  uint8_t pk = 0;  // AXP2101 0x27 bits 3:2 = hardware long-press power-off time; set 10 s
+  if (i2cRead(ADDR_PMU, 0x27, &pk, 1)) i2cWrite8(ADDR_PMU, 0x27, (pk & 0xF3) | (3 << 2));
   bootLog(expanderInit() ? "IO expander set: display power on, resets released" : "IO expander did not answer");
 
   // Bring the panel up on its own first, so a framebuffer problem can still show something.

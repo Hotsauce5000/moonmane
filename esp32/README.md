@@ -29,8 +29,10 @@ If an upload won't start, hold **BOOT** while plugging in the USB cable, then up
 | **B**: use icon / pick / guess right | B button | PWR, short press |
 | **C**: back / clock | C button | BOOT, hold |
 | Mute or unmute | Hold C for 2 seconds | |
+| Screen off | | Hold PWR for 3 seconds |
+| Save and power off | | Hold PWR for 5 seconds. Press PWR to turn it back on. |
 
-Holding PWR for several seconds turns the board off. That's the power chip's built-in behavior.
+While plugged into USB, the board may start right back up after powering off, because the charger keeps it powered.
 
 The screen turns off after 30 seconds without input. Any touch or button wakes it, and the first press only wakes the screen. When your horse needs you, it beeps and turns the screen on for 15 seconds. On battery, the board sleeps between ticks while the screen is off. On USB, it stays awake so uploads keep working.
 
@@ -60,6 +62,8 @@ The values at the top of `app.cpp` can be changed:
 - `VOLUME`
 - `USE_LIGHT_SLEEP`
 - `MAX_CATCHUP_S`
+- `PWR_SLEEP_MS`, `PWR_OFF_MS`
+- `BOOT_TEST`: set to 1 to flash red, green and blue at startup and log each startup step to the Serial Monitor
 
 Stage lengths and heart timers are at the top of `game.cpp`.
 
