@@ -20,6 +20,7 @@
 #define VOLUME 70                 // 0-100
 #define USE_LIGHT_SLEEP 1         // sleep between ticks while the screen is off (big battery saving)
 #define MAX_CATCHUP_S (2 * 3600)  // time that passes while powered off; anything longer is a pause
+#define BOOT_TEST 1               // flash red, green, blue at startup and log each step to Serial
 
 // ---------------------------------------------------------------- pins (Waveshare V2 pin_config.h)
 #define LCD_SDIO0 4
@@ -102,12 +103,13 @@ static bool i2cRead(uint8_t addr, uint8_t reg, uint8_t *buf, uint8_t n) {
 }
 
 // ---------------------------------------------------------------- IO expander
-static void expanderInit() {
-  i2cWrite8(ADDR_EXPANDER, 0x03, 0x78);  // P0,P1,P2,P7 outputs; the rest inputs
-  i2cWrite8(ADDR_EXPANDER, 0x01, 0x80);  // hold display and touch in reset
+static bool expanderInit() {
+  bool ok = i2cWrite8(ADDR_EXPANDER, 0x03, 0x78);  // P0,P1,P2,P7 outputs; the rest inputs
+  ok &= i2cWrite8(ADDR_EXPANDER, 0x01, 0x80);      // hold display and touch in reset
   delay(20);
-  i2cWrite8(ADDR_EXPANDER, 0x01, 0x87);  // release resets, display power on
-  delay(50);
+  ok &= i2cWrite8(ADDR_EXPANDER, 0x01, 0x87);      // release resets, display power on
+  delay(120);
+  return ok;
 }
 static bool pwrKeyDown() {
   uint8_t v = 0;
@@ -436,20 +438,55 @@ static void lightSleepTick() {
 }
 
 // ---------------------------------------------------------------- setup / loop
+static void bootLog(const char *msg) {
+#if BOOT_TEST
+  Serial.printf("[stablemate %6lu ms] %s\n", (unsigned long)millis(), msg);
+  Serial.flush();
+#endif
+}
+
 void setup() {
   Serial.begin(115200);
+#if BOOT_TEST
+  for (uint32_t t0 = millis(); !Serial && millis() - t0 < 2000;) delay(10);  // give Serial Monitor a moment
+#endif
+  bootLog("boot");
+  Serial.printf("PSRAM size: %u bytes, free heap: %u\n", (unsigned)ESP.getPsramSize(), (unsigned)ESP.getFreeHeap());
   setCpuFrequencyMhz(160);
   pinMode(BOOT_PIN, INPUT_PULLUP);
   Wire.begin(I2C_SDA, I2C_SCL, 400000);
-  expanderInit();
+  static const uint8_t PROBE[] = {ADDR_EXPANDER, ADDR_TOUCH, ADDR_RTC, ADDR_PMU, 0x18 /* ES8311 */};
+  for (uint8_t a : PROBE) {
+    Wire.beginTransmission(a);
+    Serial.printf("I2C 0x%02X: %s\n", a, Wire.endTransmission() == 0 ? "found" : "MISSING");
+  }
+  bootLog(expanderInit() ? "IO expander set: display power on, resets released" : "IO expander did not answer");
 
-  if (!gfx->begin()) {
-    Serial.println("Display or framebuffer failed. Is PSRAM enabled (Tools > PSRAM > OPI PSRAM)?");
+  // Bring the panel up on its own first, so a framebuffer problem can still show something.
+  if (!panel->begin()) {
+    bootLog("display init FAILED (QSPI)");
     for (;;) delay(1000);
   }
+  panel->displayOn();
   panel->setBrightness(BRIGHTNESS);
+  bootLog("display init ok");
+#if BOOT_TEST
+  panel->fillScreen(RGB565_RED);   delay(400);
+  panel->fillScreen(RGB565_GREEN); delay(400);
+  panel->fillScreen(RGB565_BLUE);  delay(400);
+  bootLog("color test done");
+#endif
+  if (!gfx->begin(GFX_SKIP_OUTPUT_BEGIN)) {
+    // Screen buffer needs PSRAM. Show solid red so the problem is visible without a computer.
+    bootLog("framebuffer allocation FAILED: set Tools > PSRAM > OPI PSRAM and upload again");
+    panel->fillScreen(RGB565_RED);
+    for (;;) delay(1000);
+  }
+  bootLog("framebuffer ok");
   touchInit();
+  bootLog("touch ready");
   soundInit();
+  bootLog("sound ready");
 
   prefs.begin("stablemate", false);
   muted = prefs.getBool("muted", false);
@@ -467,7 +504,9 @@ void setup() {
   }
   lastInputMs = millis();
   lastSaveMs = millis();
+  bootLog("game loaded, drawing first frame");
   drawFrame();
+  bootLog("running");
 }
 
 void loop() {
