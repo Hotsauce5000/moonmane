@@ -1,5 +1,5 @@
 // Desktop check of the game logic: runs whole lifetimes in fast-forward.
-// Build: g++ -std=c++17 -O2 -I../StablemateMusic host_test.cpp ../StablemateMusic/game.cpp -o host_test
+// Build: g++ -std=c++17 -O2 -I../MoonmaneMusic host_test.cpp ../MoonmaneMusic/game.cpp -o host_test
 #include "game.h"
 #include <cstdio>
 #include <cstring>

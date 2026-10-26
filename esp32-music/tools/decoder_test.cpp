@@ -1,5 +1,5 @@
 // Decodes MP3/WAV files on a desktop and prints rate and length.
-// Build: g++ -std=c++17 -O2 -I../StablemateMusic decoder_test.cpp ../StablemateMusic/decoder.cpp -o decoder_test
+// Build: g++ -std=c++17 -O2 -I../MoonmaneMusic decoder_test.cpp ../MoonmaneMusic/decoder.cpp -o decoder_test
 // Run:   ./decoder_test song.mp3 clip.wav
 #include "decoder.h"
 #include <cstdio>

@@ -1,15 +1,14 @@
-// Stablemate board code: setup() and loop() live here.
-// Kept in a .cpp file so the Arduino IDE does not rewrite it (see Stablemate.ino).
+// MoonmaneMusic board code: setup() and loop() live here.
+// Kept in a .cpp file so the Arduino IDE does not rewrite it (see MoonmaneMusic.ino).
 
 #include <Arduino.h>
 #include <Wire.h>
 #include <Preferences.h>
 #include <Arduino_GFX_Library.h>
-#include <ESP_I2S.h>
 #include <esp_sleep.h>
 #include <driver/gpio.h>
 #include <esp_random.h>
-#include "es8311.h"
+#include "audio.h"
 #include "game.h"
 #include "sprites.h"
 
@@ -17,7 +16,7 @@
 #define SCREEN_TIMEOUT_MS 30000   // screen off after this long without input
 #define CALL_SCREEN_MS 15000      // how long a call keeps the screen on
 #define BRIGHTNESS 200            // 0-255
-#define VOLUME 70                 // 0-100
+#define VOLUME 70                 // 0-100, starting volume (the player's VOL buttons change it)
 #define USE_LIGHT_SLEEP 1         // sleep between ticks while the screen is off (big battery saving)
 #define MAX_CATCHUP_S (2 * 3600)  // time that passes while powered off; anything longer is a pause
 #define BOOT_TEST 0               // 1 = flash red, green, blue at startup and log each step to Serial
@@ -37,12 +36,7 @@
 #define I2C_SCL 14
 #define TP_INT 21
 #define BOOT_PIN 0
-#define I2S_MCK 16
-#define I2S_BCK 9
-#define I2S_WS 45
-#define I2S_DOUT 8
-#define I2S_DIN 10
-#define PA_EN 46
+#define PA_EN 46  // speaker amp (audio.cpp drives it; powerOff() turns it off)
 
 #define ADDR_EXPANDER 0x20  // TCA9554: P0 LCD reset, P1 display power, P2 touch reset, P4 PWR key, P7 SD CS
 #define ADDR_TOUCH 0x15
@@ -70,12 +64,15 @@ static const uint16_t C_ICON_OFF = rgb(0x9f, 0xab, 0x89);  // unlit icon: ink at
 static const uint16_t C_CREAM = rgb(0xf3, 0xe9, 0xd4);
 static const uint16_t C_BTN_TEXT = rgb(0x7d, 0x67, 0x45);
 
-// layout (all in screen pixels)
-static const int DOT_X0 = 24, DOT_Y0 = 72, DOT_PITCH = 10, DOT_SIZE = 8;
-static const int ICON_PX = 4, ICON_TOP_CY = 44, ICON_BOT_CY = 298;
-static const int BTN_Y = 400, BTN_R = 32;
+// layout (all in screen pixels). A 52 px top bar holds the name and the horseshoe music button.
+static const int TOP_BAR = 52;
+static const int SHOE_X = 320, SHOE_Y = 28, SHOE_R = 21;
+static const int PANEL_Y = 48;  // brass rim top
+static const int DOT_X0 = 24, DOT_Y0 = 112, DOT_PITCH = 10, DOT_SIZE = 8;
+static const int ICON_PX = 4, ICON_TOP_CY = 84, ICON_BOT_CY = 338;
+static const int BTN_Y = 410, BTN_R = 28;
 static const int BTN_X[3] = {94, 184, 274};
-static const int TOUCH_BTN_TOP = 352;
+static const int TOUCH_BTN_TOP = 378;
 
 // ---------------------------------------------------------------- globals
 Game game;
@@ -84,6 +81,10 @@ uint8_t fb[W * H];
 bool screenOn = true, muted = false;
 uint32_t lastInputMs = 0, screenHoldUntil = 0, lastSaveMs = 0, lastRtcMs = 0, toastUntil = 0;
 const char *toast = nullptr;
+enum View : uint8_t { V_GAME, V_PLAYER, V_LIST };
+View view = V_GAME;
+int volume = VOLUME, listTop = 0, savedTrack = -1;
+uint32_t lastUiDraw = 0;
 int8_t pressedBtn = -1;
 uint32_t pressedUntil = 0;
 volatile bool touchIrq = false;
@@ -206,76 +207,9 @@ static bool touchRead(int &x, int &y) {
   return true;
 }
 
-// ---------------------------------------------------------------- sound (ES8311 + speaker amp)
-I2SClass i2s;
-QueueHandle_t sfxQueue;
-volatile bool soundBusy = false;
-static const int SR = 16000;
-
-struct Note { uint16_t hz, ms; };
-static void playNotes(const Note *n, int count) {
-  static int16_t buf[256 * 2];
-  digitalWrite(PA_EN, HIGH);
-  for (int k = 0; k < count; k++) {
-    int frames = SR * n[k].ms / 1000;
-    int half = n[k].hz ? SR / (2 * n[k].hz) : 0;
-    int phase = 0;
-    while (frames > 0) {
-      int chunk = frames > 256 ? 256 : frames;
-      for (int i = 0; i < chunk; i++) {
-        int16_t v = 0;
-        if (half) { v = ((phase / half) & 1) ? 3500 : -3500; phase++; }
-        buf[2 * i] = v; buf[2 * i + 1] = v;
-      }
-      i2s.write((uint8_t *)buf, chunk * 4);
-      frames -= chunk;
-    }
-  }
-  memset(buf, 0, sizeof buf);
-  i2s.write((uint8_t *)buf, sizeof buf);  // flush with silence so the tail doesn't click
-}
-static void soundTask(void *) {
-  uint8_t s;
-  for (;;) {
-    if (xQueueReceive(sfxQueue, &s, pdMS_TO_TICKS(1500)) != pdTRUE) {
-      digitalWrite(PA_EN, LOW);  // amp off when quiet
-      soundBusy = false;
-      continue;
-    }
-    soundBusy = true;
-    switch (s) {
-      case SFX_CLICK: { static const Note n[] = {{2200, 35}}; playNotes(n, 1); break; }
-      case SFX_ERR: { static const Note n[] = {{330, 80}, {0, 30}, {330, 80}}; playNotes(n, 3); break; }
-      case SFX_CALL: { static const Note n[] = {{1760, 70}, {0, 70}, {1760, 70}, {0, 70}, {1760, 70}}; playNotes(n, 5); break; }
-      case SFX_GOOD: { static const Note n[] = {{1320, 70}, {1760, 70}, {2640, 100}}; playNotes(n, 3); break; }
-      case SFX_DIE: { static const Note n[] = {{880, 200}, {660, 200}, {440, 400}}; playNotes(n, 3); break; }
-      case SFX_WIN: { static const Note n[] = {{1760, 80}}; playNotes(n, 1); break; }
-      case SFX_LOSE: { static const Note n[] = {{440, 120}}; playNotes(n, 1); break; }
-      default: break;
-    }
-  }
-}
-static void soundInit() {
-  pinMode(PA_EN, OUTPUT);
-  digitalWrite(PA_EN, LOW);
-  i2s.setPins(I2S_BCK, I2S_WS, I2S_DOUT, I2S_DIN, I2S_MCK);
-  if (!i2s.begin(I2S_MODE_STD, SR, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO, I2S_STD_SLOT_BOTH)) {
-    Serial.println("I2S init failed; running without sound");
-    return;
-  }
-  es8311_handle_t es = es8311_create(0, ES8311_ADDRRES_0);
-  if (!es) { Serial.println("ES8311 not found"); return; }
-  const es8311_clock_config_t clk = {false, false, true, SR * 256, SR};
-  if (es8311_init(es, &clk, ES8311_RESOLUTION_16, ES8311_RESOLUTION_16) != ESP_OK) { Serial.println("ES8311 init failed"); return; }
-  es8311_sample_frequency_config(es, clk.mclk_frequency, clk.sample_frequency);
-  es8311_voice_volume_set(es, VOLUME, NULL);
-  sfxQueue = xQueueCreate(8, 1);
-  xTaskCreatePinnedToCore(soundTask, "sfx", 4096, nullptr, 2, nullptr, 0);
-}
+// ---------------------------------------------------------------- sound
 static void sound(Sfx s) {
-  if (muted || !sfxQueue || s == SFX_NONE) return;
-  uint8_t v = s;
-  xQueueSend(sfxQueue, &v, 0);
+  if (!muted && s != SFX_NONE) audio::beep(s);
 }
 
 // ---------------------------------------------------------------- drawing
@@ -290,6 +224,45 @@ static void drawText(const char *s, int x, int y, int scale, uint16_t c) {
 }
 static int textWidth(const char *s, int scale) { return ((int)strlen(s) * 4 - 1) * scale; }
 
+// File names can hold any characters, so they use the library's built-in font (6x8 per size step).
+static void drawName(const char *s, int x, int y, int size, uint16_t c, int maxChars) {
+  char buf[64];
+  int n = 0;
+  for (; *s && n < maxChars && n < 63; s++) {
+    unsigned char ch = (unsigned char)*s;
+    if (ch >= 0x80) { if ((ch & 0xC0) == 0x80) continue; ch = '?'; }  // one '?' per non-ASCII character
+    buf[n++] = (char)ch;
+  }
+  if (*s && n >= 3) { buf[n - 1] = '.'; buf[n - 2] = '.'; buf[n - 3] = '.'; }
+  buf[n] = 0;
+  gfx->setTextSize(size);
+  gfx->setTextColor(c);
+  gfx->setCursor(x, y);
+  gfx->print(buf);
+}
+// Word-wraps into up to `lines` lines of `cols` characters.
+static void drawWrapped(const char *s, int x, int y, int size, int lineH, uint16_t c, int cols, int lines) {
+  int len = (int)strlen(s), start = 0;
+  for (int l = 0; l < lines && start < len; l++) {
+    int end = start + cols;
+    if (end >= len) end = len;
+    else if (l < lines - 1) {
+      int sp = end;
+      while (sp > start && s[sp] != ' ' && s[sp] != '/' && s[sp] != '-' && s[sp] != '_') sp--;
+      if (sp > start + cols / 2) end = s[sp] == ' ' ? sp : sp + 1;  // break at the space, or just after / - _
+    }
+    char line[64];
+    int n = end - start < 63 ? end - start : 63;
+    memcpy(line, s + start, n);
+    line[n] = 0;
+    bool last = l == lines - 1 && end < len;
+    drawName(line, x, y + l * lineH, size, c, last ? cols - 1 : cols);
+    if (last) drawName("...", x + (cols - 3) * 6 * size, y + l * lineH, size, c, 3);
+    start = end;
+    while (start < len && s[start] == ' ') start++;
+  }
+}
+
 static void drawIcon(int i, bool on) {
   int cx = DOT_X0 + 80 * (i % 4) + 40, cy = i < 4 ? ICON_TOP_CY : ICON_BOT_CY;
   int x0 = cx - ICON_W * ICON_PX / 2, y0 = cy - ICON_H * ICON_PX / 2;
@@ -298,29 +271,38 @@ static void drawIcon(int i, bool on) {
     for (int k = 0; k < ICON_W; k++)
       if (ICON_R[i][j][k] == '#') gfx->fillRect(x0 + k * ICON_PX, y0 + j * ICON_PX, ICON_PX, ICON_PX, c);
 }
+static void drawPixelIcon(int i, int cx, int cy, int px, uint16_t c) {
+  int x0 = cx - ICON_W * px / 2, y0 = cy - ICON_H * px / 2;
+  for (int j = 0; j < ICON_H; j++)
+    for (int k = 0; k < ICON_W; k++)
+      if (ICON_R[i][j][k] == '#') gfx->fillRect(x0 + k * px, y0 + j * px, px, px, c);
+}
 
-static void drawFrame() {
-  uint32_t now = millis();
-  gfx->fillScreen(C_COAT);
-  gfx->fillCircle(70, 40, 120, C_COAT_HI);  // soft sheen across the shell
-  gfx->fillCircle(70, 40, 95, C_COAT);
+static void drawTopBar(uint32_t now) {
+  audio::Status st = audio::status();
+  bool playing = st.loaded && !st.paused;
+  bool calling = game.attention() && view != V_GAME;
+  const char *label = (toast && now < toastUntil) ? toast : calling ? "HORSE NEEDS YOU" : "MOONMANE";
+  drawText(label, 26, 22, 2, calling && !(toast && now < toastUntil) ? C_BRASS : C_CREAM);
+  if (calling && (now / 500) % 2) drawPixelIcon(7, 262, SHOE_Y, 2, C_BRASS);
+  // The horseshoe: opens the music player. Brass while music plays, cream while the player is open.
+  uint16_t fill = view != V_GAME ? C_CREAM : playing ? C_BRASS : C_BEZEL;
+  gfx->fillCircle(SHOE_X, SHOE_Y, SHOE_R + 2, C_BRASS);
+  gfx->fillCircle(SHOE_X, SHOE_Y, SHOE_R, fill);
+  drawPixelIcon(2, SHOE_X, SHOE_Y, 2, fill == C_BEZEL ? C_BRASS : C_BEZEL);
+}
+
+static void drawGameView(uint32_t now) {
   // screen: brass rim, dark bezel, LCD glass
-  gfx->fillRoundRect(6, 8, 356, 326, 22, C_BRASS);
-  gfx->fillRoundRect(10, 12, 348, 318, 18, C_BEZEL);
-  gfx->fillRoundRect(18, 20, 332, 302, 12, C_LCD);
-
+  gfx->fillRoundRect(6, PANEL_Y, 356, 326, 22, C_BRASS);
+  gfx->fillRoundRect(10, PANEL_Y + 4, 348, 318, 18, C_BEZEL);
+  gfx->fillRoundRect(18, PANEL_Y + 12, 332, 302, 12, C_LCD);
   game.render(fb);
   for (int y = 0; y < H; y++)
     for (int x = 0; x < W; x++)
       gfx->fillRect(DOT_X0 + x * DOT_PITCH, DOT_Y0 + y * DOT_PITCH, DOT_SIZE, DOT_SIZE, fb[y * W + x] ? C_INK : C_GHOST);
   int sel = game.selectedIcon();
   for (int i = 0; i < 8; i++) drawIcon(i, i == sel || (i == 7 && game.attention()));
-
-  // brand line, or a short notice
-  const char *label = (toast && now < toastUntil) ? toast : "STABLEMATE";
-  drawText(label, (LCD_W - textWidth(label, 3)) / 2, 344, 3, C_CREAM);
-
-  // the three buttons
   static const char *L[3] = {"A", "B", "C"};
   for (int i = 0; i < 3; i++) {
     bool down = pressedBtn == i && now < pressedUntil;
@@ -328,7 +310,117 @@ static void drawFrame() {
     gfx->fillCircle(BTN_X[i], BTN_Y + (down ? 3 : 0), BTN_R, down ? C_BRASS : C_CREAM);
     drawText(L[i], BTN_X[i] - 6, BTN_Y - 10 + (down ? 3 : 0), 4, C_BTN_TEXT);
   }
+}
+
+// player geometry, shared by drawing and touch
+static const int P_ROW = 278, P_PREV_X = 96, P_PLAY_X = 184, P_NEXT_X = 272, P_SIDE_R = 28, P_PLAY_R = 36;
+static const int V_ROW = 344, V_MINUS_X = 50, V_PLUS_X = 174, V_R = 22;
+static const int LIST_Y0 = 100, LIST_ROW = 34, LIST_ROWS = 7, LIST_BTN_Y = 372;
+
+static void pill(int x, int y, int w, int h, uint16_t bg, const char *label, uint16_t fg) {
+  gfx->fillRoundRect(x, y, w, h, h / 2, bg);
+  drawText(label, x + (w - textWidth(label, 2)) / 2, y + (h - 10) / 2, 2, fg);
+}
+
+static void drawPlayerView(uint32_t now) {
+  audio::Status st = audio::status();
+  int n = audio::trackCount();
+  drawText("MUSIC", 26, 68, 3, C_BRASS);
+  if (n > 0) {
+    char c[16];
+    snprintf(c, sizeof c, "%d/%d", st.index + 1, n);
+    drawText(c, 344 - textWidth(c, 2), 72, 2, C_CREAM);
+  }
+  gfx->fillRoundRect(16, 98, 336, 110, 14, C_BEZEL);
+  if (n == 0) {
+    const char *head = "NO SD CARD", *hint = "Insert a FAT32 micro SD card, then tap here.";
+    if (audio::lastScan() == audio::SCAN_NO_FOLDER) { head = "NO MUSIC FOLDER"; hint = "Make a folder named Music on the card, then tap here."; }
+    else if (audio::lastScan() == audio::SCAN_EMPTY) { head = "NO SONGS FOUND"; hint = "Put MP3 or WAV files in the Music folder, then tap here."; }
+    drawText(head, 30, 114, 2, C_BRASS);
+    drawWrapped(hint, 30, 140, 2, 22, C_CREAM, 25, 3);
+    return;
+  }
+  drawWrapped(audio::trackName(st.index), 30, 112, 2, 22, C_CREAM, 25, 3);
+  char line[40];
+  if (*st.error && !st.loaded) snprintf(line, sizeof line, "%s", st.error);
+  else {
+    const char *state = !st.loaded ? "STOPPED" : st.paused ? "PAUSED" : "PLAYING";
+    if (st.loaded) snprintf(line, sizeof line, "%s  %s %d.%dKHZ", state, st.mp3 ? "MP3" : "WAV", st.rate / 1000, (st.rate % 1000) / 100);
+    else snprintf(line, sizeof line, "%s", state);
+  }
+  drawText(line, 30, 186, 2, C_BRASS);
+
+  // progress
+  gfx->fillRoundRect(24, 222, 320, 8, 4, C_BEZEL);
+  if (st.loaded && st.size) {
+    int w = (int)((uint64_t)320 * st.pos / st.size);
+    if (w > 8) gfx->fillRoundRect(24, 222, w, 8, 4, C_BRASS);
+  }
+
+  // transport
+  gfx->fillCircle(P_PREV_X, P_ROW, P_SIDE_R, C_CREAM);
+  gfx->fillRect(P_PREV_X - 12, P_ROW - 11, 4, 22, C_BEZEL);
+  gfx->fillTriangle(P_PREV_X + 12, P_ROW - 11, P_PREV_X + 12, P_ROW + 11, P_PREV_X - 7, P_ROW, C_BEZEL);
+  gfx->fillCircle(P_NEXT_X, P_ROW, P_SIDE_R, C_CREAM);
+  gfx->fillRect(P_NEXT_X + 8, P_ROW - 11, 4, 22, C_BEZEL);
+  gfx->fillTriangle(P_NEXT_X - 12, P_ROW - 11, P_NEXT_X - 12, P_ROW + 11, P_NEXT_X + 7, P_ROW, C_BEZEL);
+  gfx->fillCircle(P_PLAY_X, P_ROW, P_PLAY_R, C_BRASS);
+  if (st.loaded && !st.paused) {
+    gfx->fillRect(P_PLAY_X - 12, P_ROW - 14, 9, 28, C_BEZEL);
+    gfx->fillRect(P_PLAY_X + 3, P_ROW - 14, 9, 28, C_BEZEL);
+  } else {
+    gfx->fillTriangle(P_PLAY_X - 10, P_ROW - 16, P_PLAY_X - 10, P_ROW + 16, P_PLAY_X + 16, P_ROW, C_BEZEL);
+  }
+
+  // volume and list
+  gfx->fillCircle(V_MINUS_X, V_ROW, V_R, C_CREAM);
+  gfx->fillRect(V_MINUS_X - 9, V_ROW - 2, 18, 4, C_BEZEL);
+  gfx->fillCircle(V_PLUS_X, V_ROW, V_R, C_CREAM);
+  gfx->fillRect(V_PLUS_X - 9, V_ROW - 2, 18, 4, C_BEZEL);
+  gfx->fillRect(V_PLUS_X - 2, V_ROW - 9, 4, 18, C_BEZEL);
+  char v[12];
+  snprintf(v, sizeof v, "VOL %d", volume);
+  drawText(v, (V_MINUS_X + V_PLUS_X) / 2 - textWidth(v, 2) / 2, V_ROW - 5, 2, C_CREAM);
+  pill(216, V_ROW - 22, 136, 44, C_CREAM, "SONGS", C_BTN_TEXT);
+
+  const char *hint = "BOOT NEXT  PWR PLAY  HOLD BOOT BACK";
+  drawText(hint, (LCD_W - textWidth(hint, 2)) / 2, 410, 2, C_BTN_TEXT);
+  (void)now;
+}
+
+static void drawListView(uint32_t now) {
+  audio::Status st = audio::status();
+  int n = audio::trackCount();
+  drawText("SONGS", 26, 68, 3, C_BRASS);
+  char c[24];
+  int last = listTop + LIST_ROWS < n ? listTop + LIST_ROWS : n;
+  snprintf(c, sizeof c, "%d-%d/%d", n ? listTop + 1 : 0, last, n);
+  drawText(c, 344 - textWidth(c, 2), 72, 2, C_CREAM);
+  for (int r = 0; r < LIST_ROWS; r++) {
+    int i = listTop + r;
+    if (i >= n) break;
+    int y = LIST_Y0 + r * LIST_ROW;
+    bool cur = i == st.index && st.loaded;
+    gfx->fillRoundRect(16, y, 336, LIST_ROW - 4, 8, cur ? C_BRASS : C_BEZEL);
+    drawName(audio::trackName(i), 28, y + 7, 2, cur ? C_BEZEL : C_CREAM, 26);
+  }
+  pill(16, LIST_BTN_Y - 22, 104, 44, listTop > 0 ? C_CREAM : C_BEZEL, "UP", C_BTN_TEXT);
+  pill(132, LIST_BTN_Y - 22, 104, 44, listTop + LIST_ROWS < n ? C_CREAM : C_BEZEL, "DOWN", C_BTN_TEXT);
+  pill(248, LIST_BTN_Y - 22, 104, 44, C_CREAM, "BACK", C_BTN_TEXT);
+  (void)now;
+}
+
+static void drawFrame() {
+  uint32_t now = millis();
+  gfx->fillScreen(C_COAT);
+  gfx->fillCircle(70, 40, 120, C_COAT_HI);  // soft sheen across the shell
+  gfx->fillCircle(70, 40, 95, C_COAT);
+  if (view == V_GAME) drawGameView(now);
+  else if (view == V_PLAYER) drawPlayerView(now);
+  else drawListView(now);
+  drawTopBar(now);
   gfx->flush();
+  lastUiDraw = now;
 }
 
 // ---------------------------------------------------------------- screen power
@@ -354,11 +446,71 @@ static void saveGame() {
   lastSaveMs = millis();
 }
 
+// ---------------------------------------------------------------- music player controls
+static void setVolume(int v) {
+  volume = v < 0 ? 0 : v > 100 ? 100 : v;
+  audio::setVolume(volume);
+  prefs.putInt("vol", volume);
+}
+static void openList() {
+  int n = audio::trackCount();
+  int idx = audio::status().index;
+  listTop = n ? (idx / LIST_ROWS) * LIST_ROWS : 0;
+  view = V_LIST;
+}
+static void togglePlayer() {
+  if (view == V_GAME) {
+    if (audio::trackCount() == 0) audio::scan();
+    view = V_PLAYER;
+  } else {
+    view = V_GAME;
+  }
+  sound(SFX_CLICK);
+}
+static bool inCircle(int x, int y, int cx, int cy, int r) { return (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r; }
+
+static void playerTap(int x, int y) {
+  int n = audio::trackCount();
+  if (view == V_PLAYER) {
+    if (n == 0) { audio::scan(); sound(SFX_CLICK); return; }  // tap anywhere to look again
+    if (inCircle(x, y, P_PREV_X, P_ROW, P_SIDE_R + 12)) audio::prev();
+    else if (inCircle(x, y, P_PLAY_X, P_ROW, P_PLAY_R + 8)) audio::toggle();
+    else if (inCircle(x, y, P_NEXT_X, P_ROW, P_SIDE_R + 12)) audio::next();
+    else if (inCircle(x, y, V_MINUS_X, V_ROW, V_R + 10)) setVolume(volume - 5);
+    else if (inCircle(x, y, V_PLUS_X, V_ROW, V_R + 10)) setVolume(volume + 5);
+    else if ((x >= 210 && y >= V_ROW - 30 && y <= V_ROW + 30) || (y >= 98 && y <= 208)) openList();
+    else return;
+  } else {
+    if (y >= LIST_Y0 && y < LIST_Y0 + LIST_ROWS * LIST_ROW) {
+      int i = listTop + (y - LIST_Y0) / LIST_ROW;
+      if (i >= n) return;
+      audio::play(i);
+      view = V_PLAYER;
+    } else if (y >= LIST_BTN_Y - 30 && y <= LIST_BTN_Y + 30) {
+      if (x < 126) { if (listTop > 0) listTop -= LIST_ROWS; }
+      else if (x < 242) { if (listTop + LIST_ROWS < n) listTop += LIST_ROWS; }
+      else view = V_PLAYER;
+    } else return;
+  }
+  sound(SFX_CLICK);
+}
+
+// BOOT = A, PWR = B, BOOT held = C. In the player they skip, play/pause and go back.
+static void playerButton(Btn b) {
+  int n = audio::trackCount();
+  if (b == BTN_C) { view = view == V_LIST ? V_PLAYER : V_GAME; sound(SFX_CLICK); return; }
+  if (n == 0) { audio::scan(); return; }
+  if (b == BTN_B) audio::toggle();
+  else if (view == V_LIST) listTop = listTop + LIST_ROWS < n ? listTop + LIST_ROWS : 0;
+  else audio::next();
+}
+
 // ---------------------------------------------------------------- input
 static void buttonPressed(Btn b) {
   uint32_t now = millis();
   if (!screenOn) { screenWake(); return; }  // the first press only wakes the screen
   lastInputMs = now;
+  if (view != V_GAME) { playerButton(b); lastUiDraw = 0; return; }
   pressedBtn = b; pressedUntil = now + 140;
   game.press(b, now);
 }
@@ -375,11 +527,15 @@ static void pollTouch() {
     if (touchRead(x, y)) {
       touchLast = now;
       if (!touching) {
-        touching = true; touchStart = now; touchConsumed = false;
-        touchBtn = y >= TOUCH_BTN_TOP ? (x < 139 ? 0 : x < 229 ? 1 : 2) : -1;
+        touching = true; touchStart = now; touchConsumed = false; touchBtn = -1;
         if (!screenOn) { screenWake(); touchWoke = true; touchConsumed = true; }
-        else if (touchBtn == 0 || touchBtn == 1) { buttonPressed((Btn)touchBtn); touchConsumed = true; }
-        else lastInputMs = now;
+        else if (y < TOP_BAR + 4 && x >= SHOE_X - 44) { lastInputMs = now; togglePlayer(); lastUiDraw = 0; touchConsumed = true; }
+        else if (view != V_GAME) { lastInputMs = now; playerTap(x, y); lastUiDraw = 0; touchConsumed = true; }
+        else {
+          touchBtn = y >= TOUCH_BTN_TOP ? (x < 139 ? 0 : x < 229 ? 1 : 2) : -1;
+          if (touchBtn == 0 || touchBtn == 1) { buttonPressed((Btn)touchBtn); touchConsumed = true; }
+          else lastInputMs = now;
+        }
       }
     }
   }
@@ -438,7 +594,7 @@ static void pollButtons() {
 // ---------------------------------------------------------------- light sleep
 static void lightSleepTick() {
 #if USE_LIGHT_SLEEP
-  if (soundBusy || touching || bootDown || pwrDown) { delay(20); return; }
+  if (audio::busy() || touching || bootDown || pwrDown) { delay(20); return; }
   if (usbPowered()) { delay(50); return; }  // stay awake on USB so uploads and serial keep working
   gpio_wakeup_enable((gpio_num_t)BOOT_PIN, GPIO_INTR_LOW_LEVEL);
   gpio_wakeup_enable((gpio_num_t)TP_INT, GPIO_INTR_LOW_LEVEL);
@@ -463,7 +619,7 @@ static volatile const char *bootStep = "starting";
 static void bootLog(const char *msg) {
   bootStep = msg;
 #if BOOT_TEST
-  Serial.printf("[stablemate %6lu ms] %s\n", (unsigned long)millis(), msg);
+  Serial.printf("[moonmane %6lu ms] %s\n", (unsigned long)millis(), msg);
 #endif
 }
 #if BOOT_TEST
@@ -471,7 +627,7 @@ static void bootLog(const char *msg) {
 // Serial Monitor connects late, and shows where startup stopped if it hangs.
 static void heartbeatTask(void *) {
   for (;;) {
-    Serial.printf("[stablemate] up %lus, last step: %s, screen %s\n", (unsigned long)(millis() / 1000),
+    Serial.printf("[moonmane] up %lus, last step: %s, screen %s\n", (unsigned long)(millis() / 1000),
                   (const char *)bootStep, screenOn ? "on" : "off");
     vTaskDelay(pdMS_TO_TICKS(2000));
   }
@@ -523,11 +679,12 @@ void setup() {
   bootLog("framebuffer ok");
   touchInit();
   bootLog("touch ready");
-  soundInit();
-  bootLog("sound ready");
-
-  prefs.begin("stablemate", false);
+  prefs.begin("stablemate", false);  // same save as the plain version, so your horse carries over
   muted = prefs.getBool("muted", false);
+  volume = prefs.getInt("vol", VOLUME);
+  savedTrack = prefs.getInt("track", 0);
+  bootLog(audio::init(volume) ? "sound ready" : "sound init failed; running without sound");
+  audio::setStart(savedTrack);
   game.seed(esp_random());
   int64_t now = nowLocal();
   State saved;
@@ -574,8 +731,14 @@ void loop() {
   }
   if (game.takeSaveRequest() || millis() - lastSaveMs > 10UL * 60 * 1000) saveGame();
 
+  audio::Status st = audio::status();
+  if (st.loaded && st.index != savedTrack) { savedTrack = st.index; prefs.putInt("track", savedTrack); }
+
   if (screenOn) {
-    if (game.dirty() || millis() < pressedUntil + 40 || (toast && millis() < toastUntil + 40)) {
+    bool redraw = view == V_GAME
+                      ? (game.dirty() || millis() < pressedUntil + 40)
+                      : (millis() - lastUiDraw >= 250);  // player: progress bar and call badge
+    if (redraw || (toast && millis() < toastUntil + 40) || lastUiDraw == 0) {
       game.clean();
       drawFrame();
     }

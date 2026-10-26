@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="Stablemate: a horse-themed virtual pet on a 32x20 dot-matrix screen.">
-<title>Stablemate</title>
+<meta name="description" content="Moonmane: a horse-themed virtual pet on a 32x20 dot-matrix screen.">
+<title>Moonmane</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Karla:wght@400;600;700&family=Rye&family=Silkscreen&display=swap">
@@ -92,12 +92,12 @@ kbd{font-family:var(--font-pixel);font-size:.72rem;border:1px solid var(--rule);
 </head>
 <body>
 <main class="wrap">
-  <section class="stage" aria-label="Stablemate toy">
+  <section class="stage" aria-label="Moonmane toy">
     <div class="toy">
       <div class="ring"></div>
       <div class="shell">
         <span class="patch p1"></span><span class="patch p2"></span><span class="patch p3"></span>
-        <div class="brand">Stablemate</div>
+        <div class="brand">Moonmane</div>
         <svg class="shoe" viewBox="0 0 100 80" aria-hidden="true">
           <defs>
             <linearGradient id="brass" x1="0" y1="0" x2="1" y2="1">
@@ -117,7 +117,7 @@ kbd{font-family:var(--font-pixel);font-size:.72rem;border:1px solid var(--rule);
   </section>
 
   <section class="info">
-    <h1>Stablemate</h1>
+    <h1>Moonmane</h1>
     <p class="lede">A pocket horse on a 32&times;20 dot screen. Hatch the egg, then raise your foal: feed it, muck out the stall, call the vet, and turn off the barn lights when it naps.</p>
 
     <p class="label">Buttons</p>
@@ -252,7 +252,7 @@ const INFO = {
   arab: { name: 'ARABIAN', hh: '15.1', lb: 950, life: 28 }, pony: { name: 'PONY', hh: '13.2', lb: 650, life: 30 },
   mule: { name: 'MULE', hh: '15.0', lb: 900, life: 32 }
 };
-const KEY = 'stablemate.v1';
+const KEY = 'stablemate.v1';  // old name kept on purpose: changing it would erase everyone's saved horse
 
 function fresh() {
   return { v: 1, form: 'egg', dead: false, st: 0, hunger: 2, happy: 2, disc: 0, wOff: 0, hT: 0, pT: 0,

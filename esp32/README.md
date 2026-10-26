@@ -1,4 +1,4 @@
-# Stablemate for ESP32-S3-Touch-AMOLED-1.8
+# Moonmane for ESP32-S3-Touch-AMOLED-1.8
 
 A horse-themed virtual pet for the Waveshare ESP32-S3-Touch-AMOLED-1.8 (V2 board: CO5300 display, CST820 touch). It runs on a 32×20 dot screen and is paced like the 1996 Tamagotchi.
 
@@ -6,7 +6,7 @@ A horse-themed virtual pet for the Waveshare ESP32-S3-Touch-AMOLED-1.8 (V2 board
 
 1. Install the **esp32 by Espressif Systems** core, version **3.x**. Use Boards Manager.
 2. Install **GFX Library for Arduino** (by Moon On Our Nation), version **1.6.x**. Use Library Manager.
-3. Open `Stablemate/Stablemate.ino`.
+3. Open `Moonmane/Moonmane.ino`.
 4. In the **Tools** menu:
    - Board: **ESP32S3 Dev Module**
    - USB CDC On Boot: **Enabled**
@@ -69,13 +69,13 @@ Stage lengths and heart timers are at the top of `game.cpp`.
 
 ## Files
 
-- `Stablemate/Stablemate.ino`: intentionally empty; the Arduino IDE opens the project from it.
-- `Stablemate/app.cpp`: board setup for display, touch, buttons, clock, sound, sleep and saving.
-- `Stablemate/game.cpp`, `game.h`: the game. It has no hardware code.
-- `Stablemate/sprites.h`: horses, icons and the 3×5 font.
-- `Stablemate/es8311.*`: Espressif's ES8311 audio codec driver (Apache-2.0), from Waveshare's examples.
+- `Moonmane/Moonmane.ino`: intentionally empty; the Arduino IDE opens the project from it.
+- `Moonmane/app.cpp`: board setup for display, touch, buttons, clock, sound, sleep and saving.
+- `Moonmane/game.cpp`, `game.h`: the game. It has no hardware code.
+- `Moonmane/sprites.h`: horses, icons and the 3×5 font.
+- `Moonmane/es8311.*`: Espressif's ES8311 audio codec driver (Apache-2.0), from Waveshare's examples.
 - `tools/host_test.cpp`: runs whole lifetimes on a desktop in under a second.
 
   ```
-  g++ -std=c++17 -I../Stablemate host_test.cpp ../Stablemate/game.cpp -o host_test && ./host_test
+  g++ -std=c++17 -I../Moonmane host_test.cpp ../Moonmane/game.cpp -o host_test && ./host_test
   ```

@@ -1,4 +1,4 @@
-// Sound for StablemateMusic: the horse's beeps plus an MP3/WAV player reading /Music on the SD card.
+// Sound for MoonmaneMusic: the horse's beeps plus an MP3/WAV player reading /Music on the SD card.
 // One background task owns the speaker. Beeps are mixed over the music, which ducks while they play.
 #pragma once
 #include <stdint.h>
