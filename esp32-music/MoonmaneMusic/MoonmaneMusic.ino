@@ -1,5 +1,5 @@
-// StablemateMusic for the Waveshare ESP32-S3-Touch-AMOLED-1.8 (V2: CO5300 display, CST816/CST820 touch).
-// Stablemate, the horse-themed virtual pet, plus an MP3/WAV player for songs on the SD card.
+// MoonmaneMusic for the Waveshare ESP32-S3-Touch-AMOLED-1.8 (V2: CO5300 display, CST816/CST820 touch).
+// Moonmane, the horse-themed virtual pet, plus an MP3/WAV player for songs on the SD card.
 //
 // Controls
 //   Touch  : A / B / C buttons under the game screen. Hold C for 2 s to mute or unmute the horse's beeps.

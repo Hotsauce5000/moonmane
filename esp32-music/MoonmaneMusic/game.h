@@ -1,4 +1,4 @@
-// Stablemate game logic. Hardware-free: the sketch feeds it wall-clock time and button
+// Moonmane game logic. Hardware-free: the sketch feeds it wall-clock time and button
 // presses, and reads back a 32x20 dot framebuffer, icon state and sound requests.
 #pragma once
 #include <stdint.h>

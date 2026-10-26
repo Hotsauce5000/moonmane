@@ -1,4 +1,4 @@
-// Stablemate for the Waveshare ESP32-S3-Touch-AMOLED-1.8 (V2: CO5300 display, CST816/CST820 touch).
+// Moonmane for the Waveshare ESP32-S3-Touch-AMOLED-1.8 (V2: CO5300 display, CST816/CST820 touch).
 // A horse-themed virtual pet on a 32x20 dot "LCD", paced like the 1996 Tamagotchi.
 //
 // Controls

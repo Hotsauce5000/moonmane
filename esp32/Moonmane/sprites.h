@@ -1,4 +1,4 @@
-// Stablemate pixel art. '#' = dot on. Every horse faces right; the renderer mirrors it.
+// Moonmane pixel art. '#' = dot on. Every horse faces right; the renderer mirrors it.
 #pragma once
 #include <stdint.h>
 

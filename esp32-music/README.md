@@ -1,6 +1,6 @@
-# StablemateMusic for ESP32-S3-Touch-AMOLED-1.8
+# MoonmaneMusic for ESP32-S3-Touch-AMOLED-1.8
 
-This version of Stablemate adds an MP3/WAV player. Songs come from the micro SD card and play through the board's speaker. The plain version in [`../esp32`](../esp32) is unchanged.
+This version of Moonmane adds an MP3/WAV player. Songs come from the micro SD card and play through the board's speaker. The plain version in [`../esp32`](../esp32) is unchanged.
 
 Both versions use the same save, so your horse carries over when you switch between them.
 
@@ -9,7 +9,7 @@ Both versions use the same save, so your horse carries over when you switch betw
 Use the same settings as the plain version:
 
 1. Install the esp32 core 3.x and **GFX Library for Arduino** 1.6.x.
-2. Open `StablemateMusic/StablemateMusic.ino`.
+2. Open `MoonmaneMusic/MoonmaneMusic.ino`.
 3. In the **Tools** menu:
    - Board: **Waveshare ESP32-S3-Touch-AMOLED-1.8**, or **ESP32S3 Dev Module**
    - USB CDC On Boot: **Enabled**
@@ -57,11 +57,11 @@ Bluetooth headphones and speakers won't work. The ESP32-S3 only has Bluetooth Lo
 
 ## Files
 
-- `StablemateMusic/app.cpp`: board setup, the game screen, the player and song list screens, buttons and touch.
-- `StablemateMusic/audio.cpp`: the speaker, SD card, song list and beep mixing.
-- `StablemateMusic/decoder.cpp`: MP3 and WAV decoding.
-- `StablemateMusic/minimp3.h`: the MP3 decoder, [minimp3](https://github.com/lieff/minimp3) (public domain, CC0).
-- `StablemateMusic/game.cpp`, `game.h`, `sprites.h`: the game, the same as the plain version.
-- `StablemateMusic/es8311.*`: Espressif's ES8311 codec driver (Apache-2.0).
+- `MoonmaneMusic/app.cpp`: board setup, the game screen, the player and song list screens, buttons and touch.
+- `MoonmaneMusic/audio.cpp`: the speaker, SD card, song list and beep mixing.
+- `MoonmaneMusic/decoder.cpp`: MP3 and WAV decoding.
+- `MoonmaneMusic/minimp3.h`: the MP3 decoder, [minimp3](https://github.com/lieff/minimp3) (public domain, CC0).
+- `MoonmaneMusic/game.cpp`, `game.h`, `sprites.h`: the game, the same as the plain version.
+- `MoonmaneMusic/es8311.*`: Espressif's ES8311 codec driver (Apache-2.0).
 - `tools/decoder_test.cpp`: decodes MP3 and WAV files on a desktop.
 - `tools/host_test.cpp`: runs whole horse lifetimes on a desktop.
